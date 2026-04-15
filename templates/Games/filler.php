@@ -10,9 +10,9 @@ $p2_c = $grid[$p2_owned[0][0]][$p2_owned[0][1]];
             <div style="background: rgba(157, 80, 187, 0.2); border: 1px solid #9d50bb; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
                 <p style="margin: 0 0 10px 0;">🎮 <b>Partie en attente d'un adversaire</b></p>
                 <div style="display: flex; gap: 10px;">
-                    <input type="text" value="<?= $this->Url->build(['action' => 'filler', $inviteCode], true) ?>"
-                           id="inviteLink" readonly
-                           style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid #444; color: #00d2ff; text-align: center; border-radius: 5px;">
+                    <input type="text" value="<?= $this->Url->build(['action' => 'filler', $inviteCode], ['fullBase' => true]) ?>"
+       id="inviteLink" readonly
+       style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid #444; color: #00d2ff; text-align: center; border-radius: 5px;">
                     <button onclick="copyLink()" class="button" style="padding: 5px 15px !important;">Copier</button>
                 </div>
             </div>

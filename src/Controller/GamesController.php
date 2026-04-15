@@ -125,17 +125,26 @@ class GamesController extends AppController
 
     public function filler($inviteCode = null)
     {
-        $this->fetchTable('FillerGames');
+        // 1. Chargement explicite de la table
+        $fillerGamesTable = $this->fetchTable('FillerGames');
         $size = 12;
         $colors = ['#ff007c', '#00d2ff', '#9d50bb', '#2ecc71', '#f1c40f', '#e67e22'];
 
-        // On récupère l'ID de l'utilisateur connecté (Simulé à 1 si pas d'Auth encore)
+        // 2. Gestion de l'ID utilisateur (Fix pour éviter l'erreur Authentication)
         $currentUserId = 1;
-        try {
-            if ($this->Authentication->getIdentity()) {
-                $currentUserId = $this->Authentication->getIdentity()->getIdentifier();
+        if (isset($this->Authentication)) {
+            $identity = $this->Authentication->getIdentity();
+            if ($identity) {
+                $currentUserId = $identity->getIdentifier();
             }
-        } catch (\Exception $e) {}
+        } else {
+            // Si pas de plugin Auth, on simule un ID par navigateur via la session
+            $session = $this->request->getSession();
+            if (!$session->check('Config.tempUserId')) {
+                $session->write('Config.tempUserId', rand(1, 9999));
+            }
+            $currentUserId = $session->read('Config.tempUserId');
+        }
 
         // --- CAS 1 : CRÉATION D'UNE NOUVELLE PARTIE ---
         if (!$inviteCode) {
@@ -146,26 +155,26 @@ class GamesController extends AppController
                 }
             }
 
-            $game = $this->FillerGames->newEmptyEntity();
-            $game->invite_code = substr(md5((string)microtime()), 0, 8); // Code court
+            $game = $fillerGamesTable->newEmptyEntity();
+            $game->invite_code = substr(md5((string)microtime()), 0, 8);
             $game->p1_id = $currentUserId;
             $game->grid = json_encode($grid);
             $game->p1_owned = json_encode([[$size - 1, 0]]);
             $game->p2_owned = json_encode([[0, $size - 1]]);
             $game->current_turn = 1;
 
-            if ($this->FillerGames->save($game)) {
+            if ($fillerGamesTable->save($game)) {
                 return $this->redirect(['action' => 'filler', $game->invite_code]);
             }
         }
 
         // --- CAS 2 : LECTURE DE LA PARTIE VIA LE CODE ---
-        $game = $this->FillerGames->findByInviteCode($inviteCode)->firstOrFail();
+        $game = $fillerGamesTable->findByInviteCode($inviteCode)->firstOrFail();
 
         // Si un J2 arrive et que la place est libre
-        if ($game->p2_id === null && $game->p1_id !== $currentUserId) {
+        if ($game->p2_id === null && $game->p1_id != $currentUserId) {
             $game->p2_id = $currentUserId;
-            $this->FillerGames->save($game);
+            $fillerGamesTable->save($game);
         }
 
         // Désérialisation des données
@@ -174,7 +183,7 @@ class GamesController extends AppController
         $p2_owned = json_decode($game->p2_owned, true);
         $turn = $game->current_turn;
 
-        // Déterminer si c'AS le tour du joueur actuel
+        // Déterminer si c'est le tour du joueur actuel
         $isMyTurn = ($turn == 1 && $currentUserId == $game->p1_id) || ($turn == 2 && $currentUserId == $game->p2_id);
 
         // --- CAS 3 : TRAITEMENT DU COUP ---
@@ -195,22 +204,25 @@ class GamesController extends AppController
 
                 // Mise à jour de l'entité
                 $game->grid = json_encode($grid);
-                if ($turn == 1) $game->p1_owned = json_encode($newOwned);
-                else $game->p2_owned = json_encode($newOwned);
+                if ($turn == 1) {
+                    $game->p1_owned = json_encode($newOwned);
+                } else {
+                    $game->p2_owned = json_encode($newOwned);
+                }
 
                 // Vérification victoire
                 $p1_count = ($turn == 1) ? count($newOwned) : count($p1_owned);
                 $p2_count = ($turn == 2) ? count($newOwned) : count($p2_owned);
 
-                if ($p1_count + $p2_count >= $size * $size) {
+                if (($p1_count + $p2_count) >= ($size * $size)) {
                     $this->_saveScore("Filler", max($p1_count, $p2_count));
                     $this->Flash->success("Partie Terminée !");
-                    $this->FillerGames->delete($game); // On ferme la partie
+                    $fillerGamesTable->delete($game);
                     return $this->redirect(['action' => 'index']);
                 }
 
                 $game->current_turn = ($turn == 1) ? 2 : 1;
-                $this->FillerGames->save($game);
+                $fillerGamesTable->save($game);
             }
             return $this->redirect(['action' => 'filler', $inviteCode]);
         }
