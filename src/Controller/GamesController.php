@@ -125,26 +125,21 @@ class GamesController extends AppController
 
     public function filler($inviteCode = null)
     {
-        // 1. Chargement explicite de la table
+        // 1. SECURITÉ : Force la connexion
+        // On vérifie si l'utilisateur est connecté via le plugin Authentication
+        $identity = $this->Authentication->getIdentity();
+        if (isset($this->Authentication)) {
+            $identity = $this->Authentication->getIdentity();
+        }
+
+        if (!$identity) {
+        return $this->redirect(['controller' => 'Users', 'action' => 'login']);
+    }
+
+        $currentUserId = $identity->getIdentifier();
         $fillerGamesTable = $this->fetchTable('FillerGames');
         $size = 12;
         $colors = ['#ff007c', '#00d2ff', '#9d50bb', '#2ecc71', '#f1c40f', '#e67e22'];
-
-        // 2. Gestion de l'ID utilisateur (Fix pour éviter l'erreur Authentication)
-        $currentUserId = 1;
-        if (isset($this->Authentication)) {
-            $identity = $this->Authentication->getIdentity();
-            if ($identity) {
-                $currentUserId = $identity->getIdentifier();
-            }
-        } else {
-            // Si pas de plugin Auth, on simule un ID par navigateur via la session
-            $session = $this->request->getSession();
-            if (!$session->check('Config.tempUserId')) {
-                $session->write('Config.tempUserId', rand(1, 9999));
-            }
-            $currentUserId = $session->read('Config.tempUserId');
-        }
 
         // --- CAS 1 : CRÉATION D'UNE NOUVELLE PARTIE ---
         if (!$inviteCode) {
@@ -157,7 +152,7 @@ class GamesController extends AppController
 
             $game = $fillerGamesTable->newEmptyEntity();
             $game->invite_code = substr(md5((string)microtime()), 0, 8);
-            $game->p1_id = $currentUserId;
+            $game->p1_id = $currentUserId; // Le créateur est J1
             $game->grid = json_encode($grid);
             $game->p1_owned = json_encode([[$size - 1, 0]]);
             $game->p2_owned = json_encode([[0, $size - 1]]);
@@ -171,25 +166,38 @@ class GamesController extends AppController
         // --- CAS 2 : LECTURE DE LA PARTIE VIA LE CODE ---
         $game = $fillerGamesTable->findByInviteCode($inviteCode)->firstOrFail();
 
-        // Si un J2 arrive et que la place est libre
-        if ($game->p2_id === null && $game->p1_id != $currentUserId) {
-            $game->p2_id = $currentUserId;
-            $fillerGamesTable->save($game);
+        // SÉCURITÉ : Rejoindre la partie
+        if ($game->p2_id === null) {
+            // Si je ne suis pas le J1, je deviens le J2
+            if ($game->p1_id != $currentUserId) {
+                $game->p2_id = $currentUserId;
+                $fillerGamesTable->save($game);
+                $this->Flash->success("Vous avez rejoint la partie en tant qu'adversaire !");
+            } else {
+                // Si je suis le J1, je ne peux pas être mon propre adversaire
+                // On laisse passer mais isMyTurn sera géré plus bas
+            }
         }
 
-        // Désérialisation des données
+        // Désérialisation
         $grid = json_decode($game->grid, true);
         $p1_owned = json_decode($game->p1_owned, true);
         $p2_owned = json_decode($game->p2_owned, true);
         $turn = $game->current_turn;
 
-        // Déterminer si c'est le tour du joueur actuel
-        $isMyTurn = ($turn == 1 && $currentUserId == $game->p1_id) || ($turn == 2 && $currentUserId == $game->p2_id);
+        // Déterminer si c'est le tour du joueur actuel ET s'il est bien l'un des deux joueurs
+        $isP1 = ($currentUserId == $game->p1_id);
+        $isP2 = ($currentUserId == $game->p2_id);
+        $isMyTurn = ($turn == 1 && $isP1) || ($turn == 2 && $isP2);
 
         // --- CAS 3 : TRAITEMENT DU COUP ---
-        if ($this->request->is('post') && $isMyTurn) {
-            $chosenColor = $this->request->getData('color');
+        if ($this->request->is('post')) {
+            if (!$isMyTurn) {
+                $this->Flash->error("Ce n'est pas votre tour ou vous n'êtes pas joueur dans cette partie.");
+                return $this->redirect(['action' => 'filler', $inviteCode]);
+            }
 
+            $chosenColor = $this->request->getData('color');
             $p1_c = $grid[$p1_owned[0][0]][$p1_owned[0][1]];
             $p2_c = $grid[$p2_owned[0][0]][$p2_owned[0][1]];
             $forbidden = ($turn == 1) ? $p2_c : $p1_c;
@@ -202,15 +210,10 @@ class GamesController extends AppController
                     $grid[$pos[0]][$pos[1]] = $chosenColor;
                 }
 
-                // Mise à jour de l'entité
                 $game->grid = json_encode($grid);
-                if ($turn == 1) {
-                    $game->p1_owned = json_encode($newOwned);
-                } else {
-                    $game->p2_owned = json_encode($newOwned);
-                }
+                if ($turn == 1) $game->p1_owned = json_encode($newOwned);
+                else $game->p2_owned = json_encode($newOwned);
 
-                // Vérification victoire
                 $p1_count = ($turn == 1) ? count($newOwned) : count($p1_owned);
                 $p2_count = ($turn == 2) ? count($newOwned) : count($p2_owned);
 
@@ -227,7 +230,7 @@ class GamesController extends AppController
             return $this->redirect(['action' => 'filler', $inviteCode]);
         }
 
-        $this->set(compact('grid', 'colors', 'turn', 'p1_owned', 'p2_owned', 'inviteCode', 'isMyTurn', 'game'));
+        $this->set(compact('grid', 'colors', 'turn', 'p1_owned', 'p2_owned', 'inviteCode', 'isMyTurn', 'game', 'currentUserId'));
     }
 
     /**

@@ -65,3 +65,19 @@
         <?php endif; ?>
     </div>
 </div>
+<div class="users view" style="color: white; padding: 20px; background: rgba(0,0,0,0.5); border-radius: 10px;">
+    <h3 style="color: #00d2ff;"><?= h($user->username) ?></h3>
+    <table class="table" style="color: white; width: 100%;">
+        <tr>
+            <th><?= __('Username') ?></th>
+            <td><?= h($user->username) ?></td>
+        </tr>
+        <tr>
+            <th><?= __('Membre depuis') ?></th>
+            <td><?= h($user->created) ?></td>
+        </tr>
+    </table>
+    <div style="margin-top: 20px;">
+        <?= $this->Html->link(__('Déconnexion'), ['action' => 'logout'], ['style' => 'color: #ff007c;']) ?>
+    </div>
+</div>

@@ -29,6 +29,11 @@ use Cake\Http\MiddlewareQueue;
 use Cake\ORM\Locator\TableLocator;
 use Cake\Routing\Middleware\AssetMiddleware;
 use Cake\Routing\Middleware\RoutingMiddleware;
+use Authentication\AuthenticationService;
+use Authentication\AuthenticationServiceInterface;
+use Authentication\AuthenticationServiceProviderInterface;
+use Authentication\Middleware\AuthenticationMiddleware;
+use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Application setup class.
@@ -38,7 +43,8 @@ use Cake\Routing\Middleware\RoutingMiddleware;
  *
  * @extends \Cake\Http\BaseApplication<\App\Application>
  */
-class Application extends BaseApplication
+class Application extends BaseApplication implements AuthenticationServiceProviderInterface
+
 {
     /**
      * Load all the application configuration and bootstrap logic.
@@ -49,6 +55,8 @@ class Application extends BaseApplication
     {
         // Call parent to load bootstrap from files.
         parent::bootstrap();
+
+        $this->addPlugin('Authentication');
 
         // By default, does not allow fallback classes.
         FactoryLocator::add('Table', (new TableLocator())->allowFallbackClass(false));
@@ -93,6 +101,7 @@ class Application extends BaseApplication
             // ->add(new CsrfProtectionMiddleware([
             //     'httponly' => true,
             // ]))
+            ->add(new AuthenticationMiddleware($this));
             ;
 
         return $middlewareQueue;
@@ -124,4 +133,31 @@ class Application extends BaseApplication
 
         return $eventManager;
     }
+    public function getAuthenticationService(ServerRequestInterface $request): AuthenticationServiceInterface
+{
+    $authenticationService = new AuthenticationService([
+        'unauthenticatedRedirect' => '/users/login',
+        'queryParam' => 'redirect',
+    ]);
+
+    // Charge les identifiants (on vérifie le pseudo et le mot de passe)
+    $authenticationService->loadAuthenticator('Authentication.Session');
+    $authenticationService->loadAuthenticator('Authentication.Form', [
+        'fields' => [
+            'username' => 'username',
+            'password' => 'password',
+        ],
+        'loginUrl' => '/users/login',
+    ]);
+
+    // Charge les données de l'utilisateur
+    $authenticationService->loadIdentifier('Authentication.Password', [
+        'fields' => [
+            'username' => 'username',
+            'password' => 'password',
+        ],
+    ]);
+
+    return $authenticationService;
+}
 }
