@@ -46,82 +46,118 @@ class GamesController extends AppController
         $mazeTable = $this->fetchTable('MazeGames');
         $usersTable = $this->fetchTable('Users');
         $user = $usersTable->get($userId);
+        $now = new \Cake\I18n\DateTime();
 
-        if ($user->last_pa_update === null || $user->last_pa_update->wasWithinLast('1 minute') === false) {
-            $user->pa = min($user->pa + 5, 15);
-            $user->last_pa_update = new \Cake\I18n\DateTime();
-            $usersTable->save($user);
-        }
-
+        // --- 1. CRÉATION (Nouvelle Game) ---
         if (!$inviteCode) {
+            $map = $this->_loadMap('level1');
+            if (!$map) {
+                $this->Flash->error("Erreur : La carte n'a pas pu être chargée.");
+                return $this->redirect(['action' => 'index']);
+            }
+
+            $available = [];
+            foreach ($map as $y => $row) {
+                foreach ($row as $x => $char) {
+                    if ($char === '.') $available[] = [$y, $x];
+                }
+            }
+
+            shuffle($available);
+            $t_pos = array_pop($available);
+            $validSpawns = [];
+            foreach ($available as $pos) {
+                if ((abs($pos[0] - $t_pos[0]) + abs($pos[1] - $t_pos[1])) >= 5) {
+                    $validSpawns[] = $pos;
+                }
+            }
+            if (count($validSpawns) < 2) $validSpawns = $available;
+
             $game = $mazeTable->newEmptyEntity();
             $game->invite_code = substr(md5((string)microtime()), 0, 8);
             $game->p1_id = $userId;
             $game->map_name = 'level1';
-            $game->p1_pos = '1,1'; // Position de départ
-            $game->p2_pos = '2,1';
-            $game->treasure_pos = '4,1'; // À automatiser plus tard
+            $game->p1_pos = $validSpawns[0][0] . ',' . $validSpawns[0][1];
+            $game->p2_pos = $validSpawns[1][0] . ',' . $validSpawns[1][1];
+            $game->treasure_pos = $t_pos[0] . ',' . $t_pos[1];
+
+            // Reset PA
+            $user->pa = 15;
+            $user->last_pa_update = $now;
+            $usersTable->save($user);
+
             $mazeTable->save($game);
             return $this->redirect(['action' => 'maze', $game->invite_code]);
         }
 
+        // --- 2. RÉCUPÉRATION DE LA PARTIE ---
         $game = $mazeTable->findByInviteCode($inviteCode)->first();
         if (!$game) return $this->redirect(['action' => 'index']);
 
+        // J2 rejoint
         if ($game->p2_id === null && $game->p1_id != $userId) {
             $game->p2_id = $userId;
             $mazeTable->save($game);
+            $user->pa = 15;
+            $user->last_pa_update = $now;
+            $usersTable->save($user);
         }
 
-        // LOGIQUE DE DÉPLACEMENT
+        // --- 3. RECHARGE DES PA ---
+        $diffSeconds = $now->getTimestamp() - $user->last_pa_update->getTimestamp();
+        if ($diffSeconds >= 60) {
+            $intervals = floor($diffSeconds / 60);
+            $user->pa = min($user->pa + ($intervals * 5), 15);
+            $user->last_pa_update = $now;
+            $usersTable->save($user);
+            $diffSeconds = 0;
+        }
+
+        // --- 4. DÉPLACEMENT ---
         if ($this->request->is('post')) {
             $direction = $this->request->getData('move');
+            $map = $this->_loadMap($game->map_name);
 
             if ($user->pa >= 1) {
                 $isP1 = ($userId == $game->p1_id);
-                $currentPos = $isP1 ? explode(',', $game->p1_pos) : explode(',', $game->p2_pos);
-                $y = (int)$currentPos[0];
-                $x = (int)$currentPos[1];
+                $currentPos = explode(',', $isP1 ? $game->p1_pos : $game->p2_pos);
+                $y = (int)$currentPos[0]; $x = (int)$currentPos[1];
 
                 if ($direction == 'up') $y--;
-                if ($direction == 'down') $y++;
-                if ($direction == 'left') $x--;
-                if ($direction == 'right') $x++;
+                elseif ($direction == 'down') $y++;
+                elseif ($direction == 'left') $x--;
+                elseif ($direction == 'right') $x++;
 
-                // Vérification de la carte (Collision)
-                $map = $this->_loadMap($game->map_name);
                 if (isset($map[$y][$x]) && $map[$y][$x] !== '#') {
                     $newPos = "$y,$x";
-
-                    // Mise à jour du joueur
-                    if ($isP1) $game->p1_pos = $newPos;
-                    else $game->p2_pos = $newPos;
-
-                    // Consommation PA
+                    if ($isP1) $game->p1_pos = $newPos; else $game->p2_pos = $newPos;
                     $user->pa -= 1;
                     $usersTable->save($user);
                     $mazeTable->save($game);
 
-                    $this->_logAction('Maze', "Move $direction to $newPos");
-
-                    // Vérification Victoire
                     if ($newPos === $game->treasure_pos) {
                         $this->_saveScoreForUser($userId, 'Maze', 'Vainqueur');
                         $mazeTable->delete($game);
-                        $this->Flash->success("Trésor trouvé ! Vous gagnez !");
+                        $this->Flash->success("Trésor trouvé ! Victoire !");
                         return $this->redirect(['action' => 'index']);
                     }
                 } else {
                     $this->Flash->error("Mur !");
                 }
-            } else {
-                $this->Flash->error("Pas assez de PA (Attendez 1 min)");
             }
             return $this->redirect(['action' => 'maze', $inviteCode]);
         }
 
+        // --- 5. PRÉPARATION VUE ---
         $map = $this->_loadMap($game->map_name);
-        $this->set(compact('game', 'map', 'user', 'userId'));
+        $secondsToWait = 60 - $diffSeconds;
+
+        // On explose les positions pour l'affichage
+        $p1 = explode(',', $game->p1_pos);
+        $p2 = ($game->p2_id) ? explode(',', $game->p2_pos) : null;
+        $treasure = explode(',', $game->treasure_pos);
+
+        $this->set(compact('game', 'map', 'user', 'userId', 'secondsToWait', 'p1', 'p2', 'treasure'));
     }
 
     public function mastermind()
