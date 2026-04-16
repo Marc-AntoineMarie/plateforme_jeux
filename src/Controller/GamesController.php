@@ -26,6 +26,104 @@ class GamesController extends AppController
         $this->set(compact('recentScores'));
     }
 
+    private function _loadMap($mapName) {
+        $path = WWW_ROOT . 'maps' . DS . $mapName . '.txt';
+        if (!file_exists($path)) return null;
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES);
+        $map = [];
+        foreach ($lines as $y => $line) {
+            $map[$y] = str_split($line);
+        }
+        return $map;
+    }
+
+    public function maze($inviteCode = null) {
+        $identity = $this->Authentication->getIdentity();
+        if (!$identity) return $this->redirect(['controller' => 'Users', 'action' => 'login']);
+
+        $userId = $identity->getIdentifier();
+        $mazeTable = $this->fetchTable('MazeGames');
+        $usersTable = $this->fetchTable('Users');
+        $user = $usersTable->get($userId);
+
+        if ($user->last_pa_update === null || $user->last_pa_update->wasWithinLast('1 minute') === false) {
+            $user->pa = min($user->pa + 5, 15);
+            $user->last_pa_update = new \Cake\I18n\DateTime();
+            $usersTable->save($user);
+        }
+
+        if (!$inviteCode) {
+            $game = $mazeTable->newEmptyEntity();
+            $game->invite_code = substr(md5((string)microtime()), 0, 8);
+            $game->p1_id = $userId;
+            $game->map_name = 'level1';
+            $game->p1_pos = '1,1'; // Position de départ
+            $game->p2_pos = '2,1';
+            $game->treasure_pos = '4,1'; // À automatiser plus tard
+            $mazeTable->save($game);
+            return $this->redirect(['action' => 'maze', $game->invite_code]);
+        }
+
+        $game = $mazeTable->findByInviteCode($inviteCode)->first();
+        if (!$game) return $this->redirect(['action' => 'index']);
+
+        if ($game->p2_id === null && $game->p1_id != $userId) {
+            $game->p2_id = $userId;
+            $mazeTable->save($game);
+        }
+
+        // LOGIQUE DE DÉPLACEMENT
+        if ($this->request->is('post')) {
+            $direction = $this->request->getData('move');
+
+            if ($user->pa >= 1) {
+                $isP1 = ($userId == $game->p1_id);
+                $currentPos = $isP1 ? explode(',', $game->p1_pos) : explode(',', $game->p2_pos);
+                $y = (int)$currentPos[0];
+                $x = (int)$currentPos[1];
+
+                if ($direction == 'up') $y--;
+                if ($direction == 'down') $y++;
+                if ($direction == 'left') $x--;
+                if ($direction == 'right') $x++;
+
+                // Vérification de la carte (Collision)
+                $map = $this->_loadMap($game->map_name);
+                if (isset($map[$y][$x]) && $map[$y][$x] !== '#') {
+                    $newPos = "$y,$x";
+
+                    // Mise à jour du joueur
+                    if ($isP1) $game->p1_pos = $newPos;
+                    else $game->p2_pos = $newPos;
+
+                    // Consommation PA
+                    $user->pa -= 1;
+                    $usersTable->save($user);
+                    $mazeTable->save($game);
+
+                    $this->_logAction('Maze', "Move $direction to $newPos");
+
+                    // Vérification Victoire
+                    if ($newPos === $game->treasure_pos) {
+                        $this->_saveScoreForUser($userId, 'Maze', 'Vainqueur');
+                        $mazeTable->delete($game);
+                        $this->Flash->success("Trésor trouvé ! Vous gagnez !");
+                        return $this->redirect(['action' => 'index']);
+                    }
+                } else {
+                    $this->Flash->error("Mur !");
+                }
+            } else {
+                $this->Flash->error("Pas assez de PA (Attendez 1 min)");
+            }
+            return $this->redirect(['action' => 'maze', $inviteCode]);
+        }
+
+        $map = $this->_loadMap($game->map_name);
+        $this->set(compact('game', 'map', 'user', 'userId'));
+    }
+
     public function mastermind()
     {
         $session = $this->request->getSession();
