@@ -78,6 +78,7 @@ class GamesController extends AppController
         $size = 12;
         $colors = ['#ff007c', '#00d2ff', '#9d50bb', '#2ecc71', '#f1c40f', '#e67e22'];
 
+        // --- CAS 1 : CRÉATION DE PARTIE ---
         if (!$inviteCode) {
             $grid = [];
             for ($y = 0; $y < $size; $y++) {
@@ -100,6 +101,7 @@ class GamesController extends AppController
             }
         }
 
+        // --- CAS 2 : REJOINDRE OU CONTINUER ---
         $game = $fillerGamesTable->findByInviteCode($inviteCode)->first();
 
         if (!$game) {
@@ -107,6 +109,7 @@ class GamesController extends AppController
             return $this->redirect(['action' => 'index']);
         }
 
+        // Le J2 rejoint la partie
         if ($game->p2_id === null && $game->p1_id != $currentUserId) {
             $game->p2_id = $currentUserId;
             $fillerGamesTable->save($game);
@@ -122,6 +125,7 @@ class GamesController extends AppController
         $isP2 = ($currentUserId == $game->p2_id);
         $isMyTurn = ($turn == 1 && $isP1) || ($turn == 2 && $isP2);
 
+        // --- TRAITEMENT DU COUP ---
         if ($this->request->is('post')) {
             if (!$isMyTurn) {
                 return $this->redirect(['action' => 'filler', $inviteCode]);
@@ -129,12 +133,14 @@ class GamesController extends AppController
 
             $chosenColor = $this->request->getData('color');
             if ($chosenColor) {
+                // 1. Enregistrement du log de l'action
                 $this->_logAction('Filler', [
                     'invite_code' => $inviteCode,
                     'couleur_choisie' => $chosenColor,
                     'joueur' => ($turn == 1) ? 'J1' : 'J2'
                 ]);
 
+                // 2. Mise à jour du territoire
                 $owned = ($turn == 1) ? $p1_owned : $p2_owned;
                 $newOwned = $this->_expandTerritory($grid, $owned, $chosenColor, $size);
 
@@ -142,15 +148,26 @@ class GamesController extends AppController
                     $grid[$pos[0]][$pos[1]] = $chosenColor;
                 }
 
+                // 3. Mise à jour temporaire pour le calcul de fin de partie
+                if ($turn == 1) {
+                    $p1_owned = $newOwned;
+                    $game->p1_owned = json_encode($newOwned);
+                } else {
+                    $p2_owned = $newOwned;
+                    $game->p2_owned = json_encode($newOwned);
+                }
                 $game->grid = json_encode($grid);
-                if ($turn == 1) $game->p1_owned = json_encode($newOwned);
-                else $game->p2_owned = json_encode($newOwned);
 
+                $p1_count = count($p1_owned);
+                $p2_count = count($p2_owned);
                 $totalCells = $size * $size;
-                $p1_count = ($turn == 1) ? count($newOwned) : count($p1_owned);
-                $p2_count = ($turn == 2) ? count($newOwned) : count($p2_owned);
 
-                if (($p1_count + $p2_count) >= $totalCells) {
+                // --- VÉRIFICATION FIN DE PARTIE ---
+                // On vérifie si les joueurs sont bloqués
+                $noMovesP1 = !$this->_hasMovesLeft($grid, $p1_owned, $size);
+                $noMovesP2 = !$this->_hasMovesLeft($grid, $p2_owned, $size);
+
+                if (($p1_count + $p2_count) >= $totalCells || $noMovesP1 || $noMovesP2) {
                     $resultP1 = "Égalité ($p1_count pts)";
                     $resultP2 = "Égalité ($p2_count pts)";
 
@@ -162,16 +179,22 @@ class GamesController extends AppController
                         $resultP2 = "Victoire ($p2_count pts)";
                     }
 
+                    // Sauvegarde des scores finaux
                     $this->_saveScoreForUser((int)$game->p1_id, "Filler", $resultP1);
                     if ($game->p2_id) {
                         $this->_saveScoreForUser((int)$game->p2_id, "Filler", $resultP2);
                     }
 
                     $fillerGamesTable->delete($game);
-                    $this->Flash->success("Partie Terminée ! Scores enregistrés.");
+
+                    $msg = "Partie Terminée !";
+                    if ($noMovesP1 || $noMovesP2) $msg .= " (Joueur bloqué)";
+
+                    $this->Flash->success($msg);
                     return $this->redirect(['action' => 'index']);
                 }
 
+                // 4. Changement de tour et sauvegarde
                 $game->current_turn = ($turn == 1) ? 2 : 1;
                 $fillerGamesTable->save($game);
             }
@@ -264,6 +287,30 @@ class GamesController extends AppController
     //         die('Erreur lors de la sauvegarde du log');
     //     }
     // }
+
+    private function _hasMovesLeft($grid, $owned, $size) {
+        // On récupère la couleur actuelle du J1 (bas-gauche) et J2 (haut-droite)
+        $p1_color = $grid[$size - 1][0];
+        $p2_color = $grid[0][$size - 1];
+
+        foreach ($owned as $pos) {
+            $y = $pos[0];
+            $x = $pos[1];
+            $neighbors = [[$y-1, $x], [$y+1, $x], [$y, $x-1], [$y, $x+1]];
+
+            foreach ($neighbors as $n) {
+                $ny = $n[0]; $nx = $n[1];
+                if ($ny >= 0 && $ny < $size && $nx >= 0 && $nx < $size) {
+                    $neighborColor = $grid[$ny][$nx];
+                    // Si une case voisine n'est ni au J1 ni au J2, on peut encore bouger !
+                    if ($neighborColor !== $p1_color && $neighborColor !== $p2_color) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     private function _logAction($gameName, $details) {
         $userId = null;
