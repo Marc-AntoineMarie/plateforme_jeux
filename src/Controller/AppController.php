@@ -46,6 +46,17 @@ class AppController extends Controller
         $this->loadComponent('Authentication.Authentication');
     }
 
+    public function beforeRender(\Cake\Event\EventInterface $event)
+    {
+        parent::beforeRender($event);
+
+        // On envoie l'utilisateur connecté à TOUTES les vues
+        $identity = $this->Authentication->getIdentity();
+        if ($identity) {
+            $this->set('authUser', $identity->getOriginalData());
+        }
+    }
+
     public function beforeFilter(\Cake\Event\EventInterface $event)
         {
             parent::beforeFilter($event);

@@ -23,15 +23,36 @@
     </div>
 
     <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 15px;">
-        <h3 style="margin-top: 0;">🏆 Derniers Exploits</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-            <?php foreach ($recentScores as $score): ?>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <td style="padding: 10px;"><?= h($score->game_name) ?></td>
-                    <td style="padding: 10px; color: #00d2ff; font-weight: bold;"><?= h($score->score) ?> pts</td>
-                    <td style="padding: 10px; text-align: right; color: #666; font-size: 0.8rem;"><?= $score->created->timeAgoInWords() ?></td>
+        <h3 style="margin-top: 0;">🏆 Mes Derniers Exploits</h3> <table style="width: 100%; border-collapse: collapse;">
+            <?php if (!empty($recentScores) && count($recentScores) > 0): ?>
+                <?php foreach ($recentScores as $score): ?>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <td style="padding: 10px;"><?= h($score->game_name) ?></td>
+                        <td style="padding: 10px; font-weight: bold;">
+                            <?php
+                                $txt = h($score->score);
+                                if (str_contains($txt, 'Victoire')) {
+                                    echo '<span style="color: #2ecc71;">🏆 ' . $txt . '</span>';
+                                } elseif (str_contains($txt, 'Défaite')) {
+                                    echo '<span style="color: #ff4757;">❌ ' . $txt . '</span>';
+                                } else {
+                                    echo '<span style="color: #00d2ff;">' . $txt . '</span>';
+                                }
+                            ?>
+                        </td>
+                        <td style="padding: 10px; text-align: right; color: #666; font-size: 0.8rem;">
+                            <?= $score->created->timeAgoInWords() ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <tr>
+                    <td colspan="3" style="padding: 20px; text-align: center; color: #666;">
+                        Vous n'avez pas encore de scores. <br>
+                        Lancez une partie pour apparaître ici !
+                    </td>
                 </tr>
-            <?php endforeach; ?>
+            <?php endif; ?>
         </table>
     </div>
 </div>

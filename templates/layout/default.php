@@ -12,6 +12,8 @@
  * @since         0.10.0
  * @license       https://opensource.org/licenses/mit-license.php MIT License
  * @var \App\View\AppView $this
+ * @var \App\View\AppView $this
+ * @var \App\Model\Entity\User $user
  */
 
 $cakeDescription = 'CakePHP: the rapid development php framework';
@@ -39,9 +41,20 @@ $cakeDescription = 'CakePHP: the rapid development php framework';
         <div class="top-nav-title">
             <a href="<?= $this->Url->build('/') ?>"><span>Gamer</span>Platform</a>
         </div>
+
         <div class="top-nav-links">
-            <?= $this->Html->link('Mastermind', ['controller' => 'Games', 'action' => 'mastermind']) ?>
-            <?= $this->Html->link('Profil', ['controller' => 'Users', 'action' => 'view', 1]) ?>
+            <?php if (isset($authUser)): ?>
+                <span style="color: #00d2ff; font-weight: bold; margin-right: 15px;">
+                        <?= h($authUser->username) ?>
+                </span>
+                <?= $this->Html->link('Games', ['controller' => 'Games', 'action' => 'index'], ['style' => 'color: #00ff2aff; margin-right: 15px;']) ?>
+                <?= $this->Html->link('Mastermind', ['controller' => 'Games', 'action' => 'mastermind']) ?>
+                <?= $this->Html->link('Filler', ['controller' => 'Games', 'action' => 'filler']) ?>
+                <?= $this->Html->link('Profil', ['controller' => 'Users', 'action' => 'view']) ?>
+                <?= $this->Html->link('Déconnexion', ['controller' => 'Users', 'action' => 'logout'], ['style' => 'color: #ff007c;']) ?>
+            <?php else: ?>
+                <?= $this->Html->link('Connexion', ['controller' => 'Users', 'action' => 'login']) ?>
+            <?php endif; ?>
         </div>
     </nav>
     <main class="main">

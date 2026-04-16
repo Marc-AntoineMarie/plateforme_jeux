@@ -19,28 +19,40 @@ class UsersController extends AppController
         $this->request->allowMethod(['get', 'post']);
         $result = $this->Authentication->getResult();
 
-        if ($result && $result->isValid()) {
-            $target = $this->request->getQuery('redirect', [
-                'controller' => 'Games',
-                'action' => 'index',
-            ]);
-            return $this->redirect($target);
+        // 1. On force la déconnexion si on arrive sur la page de login pour éviter les restes de session
+        if ($this->request->is('get') && $this->Authentication->getResult()->isValid()) {
+            $this->Authentication->logout();
         }
 
-        if ($this->request->is('post') && !$result->isValid()) {
-            $this->Flash->error(__('Identifiant ou mot de passe invalide'));
+        $result = $this->Authentication->getResult();
+
+        // 2. Si on est en POST (tentative de connexion)
+        if ($this->request->is('post')) {
+            if ($result && $result->isValid()) {
+                // SUCCÈS : On redirige
+                $target = $this->request->getQuery('redirect', ['controller' => 'Games', 'action' => 'index']);
+                return $this->redirect($target);
+            } else {
+                // ÉCHEC : On affiche l'erreur
+                $this->Flash->error(__('Identifiants incorrects.'));
+            }
         }
     }
 
     public function logout()
     {
-        $this->Authentication->logout();
+        $result = $this->Authentication->getResult();
+        // Si on est connecté, on détruit tout
+        if ($result && $result->isValid()) {
+            $this->Authentication->logout();
+            $this->request->getSession()->destroy();
+        }
         return $this->redirect(['controller' => 'Users', 'action' => 'login']);
     }
-
     public function view($id = null)
     {
         if (!$id) {
+            // On récupère l'ID de la personne RÉELLEMENT connectée en session
             $id = $this->Authentication->getIdentity()->getIdentifier();
         }
         $user = $this->Users->get($id);

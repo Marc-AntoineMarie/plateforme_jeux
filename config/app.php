@@ -418,6 +418,15 @@ return [
      */
     'Session' => [
         'defaults' => 'php',
+        'handler' => [
+            'config' => [
+                'cookie' => 'MON_APP_UNIQUE_SESSION', // Change ce nom
+                'ini' => [
+                    'session.cookie_httponly' => 1,
+                    'session.use_force_addr' => 1, // Force l'adresse IP (évite le mélange)
+                ]
+            ]
+        ]
     ],
 
     /**
