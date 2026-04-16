@@ -14,7 +14,6 @@ class GamesController extends AppController
         $scoresTable = $this->fetchTable('Scores');
 
         if ($currentUserId) {
-            // On ne récupère QUE les scores de l'utilisateur connecté
             $recentScores = $scoresTable->find()
                 ->where(['user_id' => $currentUserId])
                 ->order(['created' => 'DESC'])
@@ -48,6 +47,10 @@ class GamesController extends AppController
             $guess = $this->request->getData('guess');
 
             if ($guess && count($guess) === 4) {
+                $this->_logAction('Mastermind', [
+                    'tentative' => $guess,
+                    'numero_coup' => count($attempts) + 1
+                ]);
                 $result = $this->_checkGuess($solution, $guess);
                 $attempts[] = ['guess' => $guess, 'result' => $result];
                 $session->write('Mastermind.attempts', $attempts);
@@ -63,55 +66,6 @@ class GamesController extends AppController
         $this->set(compact('attempts'));
     }
 
-    private function _checkGuess($solution, $guess) {
-        $exact = 0; $near = 0;
-        $solCopy = $solution; $guessCopy = $guess;
-
-        foreach ($guess as $i => $color) {
-            if ($color === $solution[$i]) {
-                $exact++;
-                $solCopy[$i] = null; $guessCopy[$i] = null;
-            }
-        }
-        foreach ($guessCopy as $i => $color) {
-            if ($color !== null && in_array($color, $solCopy)) {
-                $near++;
-                $index = array_search($color, $solCopy);
-                $solCopy[$index] = null;
-            }
-        }
-        return ['exact' => $exact, 'near' => $near];
-    }
-
-    /**
-     * SAUVEGARDE DYNAMIQUE (Plus de ID = 1 en dur)
-     */
-    private function _saveScore($gameName, $points) {
-        $identity = $this->Authentication->getIdentity();
-        if (!$identity) return false;
-
-        $scoresTable = $this->fetchTable('Scores');
-        $score = $scoresTable->newEmptyEntity();
-
-        // On utilise l'ID de la personne connectée
-        $score->user_id = $identity->getIdentifier();
-        $score->game_name = $gameName;
-        $score->score = $points;
-
-        return $scoresTable->save($score);
-    }
-
-    private function _saveScoreForUser($userId, $gameName, $resultText) {
-        $scoresTable = $this->fetchTable('Scores');
-        $score = $scoresTable->newEmptyEntity();
-
-        $score->user_id = $userId;
-        $score->game_name = $gameName;
-        $score->score = $resultText; // Maintenant c'est du texte : "Victoire (75 pts)"
-
-        return $scoresTable->save($score);
-    }
-
     public function filler($inviteCode = null)
     {
         $identity = $this->Authentication->getIdentity();
@@ -124,7 +78,6 @@ class GamesController extends AppController
         $size = 12;
         $colors = ['#ff007c', '#00d2ff', '#9d50bb', '#2ecc71', '#f1c40f', '#e67e22'];
 
-        // --- CAS 1 : CRÉATION ---
         if (!$inviteCode) {
             $grid = [];
             for ($y = 0; $y < $size; $y++) {
@@ -136,7 +89,7 @@ class GamesController extends AppController
             $game = $fillerGamesTable->newEmptyEntity();
             $game->invite_code = substr(md5((string)microtime()), 0, 8);
             $game->p1_id = $currentUserId;
-            $game->p2_id = null; // IMPORTANT : On commence à NULL
+            $game->p2_id = null;
             $game->grid = json_encode($grid);
             $game->p1_owned = json_encode([[$size - 1, 0]]);
             $game->p2_owned = json_encode([[0, $size - 1]]);
@@ -147,23 +100,19 @@ class GamesController extends AppController
             }
         }
 
-        // --- CAS 2 : LECTURE (Sécurisée contre les crashs de fin) ---
         $game = $fillerGamesTable->findByInviteCode($inviteCode)->first();
 
-        // Si la partie n'existe plus (supprimée par l'autre joueur à la fin)
         if (!$game) {
             $this->Flash->success("La partie est terminée !");
             return $this->redirect(['action' => 'index']);
         }
 
-        // Rejoindre la partie
         if ($game->p2_id === null && $game->p1_id != $currentUserId) {
             $game->p2_id = $currentUserId;
             $fillerGamesTable->save($game);
             $this->Flash->success("Vous avez rejoint l'arène !");
         }
 
-        // Désérialisation
         $grid = json_decode($game->grid, true);
         $p1_owned = json_decode($game->p1_owned, true);
         $p2_owned = json_decode($game->p2_owned, true);
@@ -173,7 +122,6 @@ class GamesController extends AppController
         $isP2 = ($currentUserId == $game->p2_id);
         $isMyTurn = ($turn == 1 && $isP1) || ($turn == 2 && $isP2);
 
-        // --- CAS 3 : TRAITEMENT DU COUP ---
         if ($this->request->is('post')) {
             if (!$isMyTurn) {
                 return $this->redirect(['action' => 'filler', $inviteCode]);
@@ -181,6 +129,12 @@ class GamesController extends AppController
 
             $chosenColor = $this->request->getData('color');
             if ($chosenColor) {
+                $this->_logAction('Filler', [
+                    'invite_code' => $inviteCode,
+                    'couleur_choisie' => $chosenColor,
+                    'joueur' => ($turn == 1) ? 'J1' : 'J2'
+                ]);
+
                 $owned = ($turn == 1) ? $p1_owned : $p2_owned;
                 $newOwned = $this->_expandTerritory($grid, $owned, $chosenColor, $size);
 
@@ -197,7 +151,6 @@ class GamesController extends AppController
                 $p2_count = ($turn == 2) ? count($newOwned) : count($p2_owned);
 
                 if (($p1_count + $p2_count) >= $totalCells) {
-                    // 1. On détermine qui a gagné
                     $resultP1 = "Égalité ($p1_count pts)";
                     $resultP2 = "Égalité ($p2_count pts)";
 
@@ -209,14 +162,12 @@ class GamesController extends AppController
                         $resultP2 = "Victoire ($p2_count pts)";
                     }
 
-                    $this->_saveScoreForUser($game->p1_id, "Filler", $resultP1);
-
+                    $this->_saveScoreForUser((int)$game->p1_id, "Filler", $resultP1);
                     if ($game->p2_id) {
-                        $this->_saveScoreForUser($game->p2_id, "Filler", $resultP2);
+                        $this->_saveScoreForUser((int)$game->p2_id, "Filler", $resultP2);
                     }
 
                     $fillerGamesTable->delete($game);
-
                     $this->Flash->success("Partie Terminée ! Scores enregistrés.");
                     return $this->redirect(['action' => 'index']);
                 }
@@ -230,16 +181,55 @@ class GamesController extends AppController
         $this->set(compact('grid', 'colors', 'turn', 'p1_owned', 'p2_owned', 'inviteCode', 'isMyTurn', 'game', 'currentUserId'));
     }
 
+    // --- MÉTHODES PRIVÉES ---
+
+    private function _checkGuess($solution, $guess) {
+        $exact = 0; $near = 0;
+        $solCopy = $solution; $guessCopy = $guess;
+        foreach ($guess as $i => $color) {
+            if ($color === $solution[$i]) {
+                $exact++;
+                $solCopy[$i] = null; $guessCopy[$i] = null;
+            }
+        }
+        foreach ($guessCopy as $i => $color) {
+            if ($color !== null && in_array($color, $solCopy)) {
+                $near++;
+                $index = array_search($color, $solCopy);
+                $solCopy[$index] = null;
+            }
+        }
+        return ['exact' => $exact, 'near' => $near];
+    }
+
+    private function _saveScore($gameName, $points) {
+        $identity = $this->Authentication->getIdentity();
+        if (!$identity) return false;
+        $scoresTable = $this->fetchTable('Scores');
+        $score = $scoresTable->newEmptyEntity();
+        $score->user_id = $identity->getIdentifier();
+        $score->game_name = $gameName;
+        $score->score = (string)$points;
+        return $scoresTable->save($score);
+    }
+
+    private function _saveScoreForUser($userId, $gameName, $resultText) {
+        $scoresTable = $this->fetchTable('Scores');
+        $score = $scoresTable->newEmptyEntity();
+        $score->user_id = $userId;
+        $score->game_name = $gameName;
+        $score->score = $resultText;
+        return $scoresTable->save($score);
+    }
+
     private function _expandTerritory($grid, $owned, $targetColor, $size) {
         $stack = $owned;
         $newOwned = $owned;
         $checked = [];
         foreach($owned as $p) { $checked["{$p[0]}-{$p[1]}"] = true; }
-
         while (!empty($stack)) {
             $curr = array_pop($stack);
             $neighbors = [[$curr[0]-1, $curr[1]], [$curr[0]+1, $curr[1]], [$curr[0], $curr[1]-1], [$curr[0], $curr[1]+1]];
-
             foreach ($neighbors as $n) {
                 $ny = $n[0]; $nx = $n[1];
                 if ($ny >= 0 && $ny < $size && $nx >= 0 && $nx < $size) {
@@ -253,5 +243,59 @@ class GamesController extends AppController
             }
         }
         return $newOwned;
+    }
+
+    // private function _logAction($gameName, $details) {
+    //     if (!isset($this->Authentication)) return;
+
+    //     $identity = $this->Authentication->getIdentity();
+    //     if (!$identity) return;
+
+    //     $logsTable = $this->fetchTable('GameLogs');
+    //     $log = $logsTable->newEmptyEntity();
+
+    //     $log->user_id = $identity->getIdentifier();
+    //     $log->game_name = $gameName;
+    //     $log->action_details = is_array($details) ? json_encode($details) : (string)$details;
+
+    //     if (!$logsTable->save($log)) {
+    //         // CELA VA S'AFFICHER DANS TA PAGE SI LA SAUVEGARDE ÉCHOUE
+    //         debug($log->getErrors());
+    //         die('Erreur lors de la sauvegarde du log');
+    //     }
+    // }
+
+    private function _logAction($gameName, $details) {
+        $userId = null;
+        $identity = $this->Authentication->getIdentity();
+
+        if ($identity) {
+            $userId = $identity->getIdentifier();
+        } elseif ($this->request->getSession()->check('Auth.User.id')) {
+            // Backup au cas où l'identity bug mais la session est là
+            $userId = $this->request->getSession()->read('Auth.User.id');
+        }
+
+        if (!$userId) return;
+
+        $logsTable = $this->fetchTable('GameLogs');
+        $log = $logsTable->newEmptyEntity();
+
+        $log->setAccess('*', true);
+
+        $log->user_id = $userId;
+        $log->game_name = $gameName;
+
+        // On s'assure que action_details est bien une chaîne
+        if (is_array($details)) {
+            $log->action_details = json_encode($details);
+        } else {
+            $log->action_details = (string)$details;
+        }
+
+        if (!$logsTable->save($log)) {
+            // Si ça échoue encore, on écrit dans les logs de CakePHP (logs/error.log)
+            $this->log("Échec log action : " . json_encode($log->getErrors()), 'error');
+        }
     }
 }
